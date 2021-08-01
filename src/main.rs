@@ -29,7 +29,7 @@ async fn handle_upgraded(mut conn: Upgraded) -> Result<()> {
     for i in 0..frame.length as usize {
         msg[i] = rest[i] ^ byte_mask[i % 4];
     }
-    
+
     println!("message: {}", String::from_utf8_lossy(&msg));
 
     Ok(())
