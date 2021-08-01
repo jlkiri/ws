@@ -2,14 +2,46 @@ use pretty_hex::*;
 use std::convert::Infallible;
 
 use nom::combinator::cond;
-use nom::error::{Error, ErrorKind};
+use nom::error::ContextError;
+use nom::error::{Error as NomError, ErrorKind as NomErrorKind};
 use nom::number::complete::be_u32;
 use nom::{
     bits::bits, bits::bytes, bits::complete::take, bytes::complete::take as take_bytes,
-    combinator::map, error::ParseError, sequence::tuple, IResult,
+    combinator::map, error::ParseError as NomParseError, sequence::tuple, IResult,
 };
 
-pub type Result<'a, T> = IResult<(&'a [u8], usize), T, Error<&'a [u8]>>;
+#[derive(Debug)]
+pub enum ErrorKind {
+    Nom(NomErrorKind),
+    Context(&'static str),
+}
+
+#[derive(Debug)]
+pub struct Error<I> {
+    pub errors: Vec<(I, ErrorKind)>,
+}
+
+impl<I> NomParseError<I> for Error<I> {
+    fn from_error_kind(input: I, kind: NomErrorKind) -> Self {
+        let errors = vec![(input, ErrorKind::Nom(kind))];
+        Self { errors }
+    }
+
+    fn append(input: I, kind: NomErrorKind, mut other: Self) -> Self {
+        other.errors.push((input, ErrorKind::Nom(kind)));
+        other
+    }
+}
+
+impl<I> ContextError<I> for Error<I> {
+    fn add_context(input: I, ctx: &'static str, mut other: Self) -> Self {
+        other.errors.push((input, ErrorKind::Context(ctx)));
+        other
+    }
+}
+
+pub type Input<'a> = &'a [u8];
+pub type Result<'a, T> = nom::IResult<Input<'a>, T, Error<Input<'a>>>;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -21,23 +53,36 @@ pub struct Frame {
     pub masking_key: u32,
 }
 
+impl<I> nom::ErrorConvert<Error<I>> for NomError<I> {
+    fn convert(self) -> Error<I> {
+        let errors = vec![(self.input, ErrorKind::Nom(self.code))];
+        Error { errors }
+    }
+}
+
+impl<I> nom::ErrorConvert<Error<I>> for NomError<(I, usize)> {
+    fn convert(self) -> Error<I> {
+        let errors = vec![(self.input.0, ErrorKind::Nom(self.code))];
+        Error { errors }
+    }
+}
+
 impl Frame {
-    pub fn parse_masking_key(input: &[u8]) -> IResult<&[u8], u32> {
+    pub fn parse_masking_key(input: &[u8]) -> Result<u32> {
         be_u32(input)
     }
 
-    pub fn parse_pre_payload(input: &[u8]) -> IResult<&[u8], (u8, u8, u8, u8, u8)> {
-        let fin = take::<_, u8, _, _>(1usize);
-        let rsv = take::<_, u8, _, _>(3usize);
-        let opcode = take::<_, u8, _, _>(4usize);
-        let mask = take::<_, u8, _, _>(1usize);
-        let payload_hint = take::<_, u8, _, _>(7usize);
-        bits::<_, _, Error<(&[u8], usize)>, _, _>(tuple((fin, rsv, opcode, mask, payload_hint)))(
-            input,
-        )
+    pub fn parse_pre_payload(input: &[u8]) -> Result<(u8, u8, u8, u8, u8)> {
+        bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
+            take(1usize),
+            take(3usize),
+            take(4usize),
+            take(1usize),
+            take(7usize),
+        )))(input)
     }
 
-    pub fn parse(input: &[u8]) -> IResult<&[u8], Frame> {
+    pub fn from_bytes(input: &[u8]) -> Result<Frame> {
         println!("input: {}", input.hex_dump());
         let (rest, parsed) = Self::parse_pre_payload(input)?;
         let (fin, rsv, opcode, mask, payload_hint) = parsed;
@@ -49,7 +94,7 @@ impl Frame {
         let payload = cond(payload_word_len >= 16, take(payload_word_len));
         map(
             tuple((
-                bits::<_, _, Error<(&[u8], usize)>, _, _>(payload),
+                bits::<_, _, NomError<(&[u8], usize)>, _, _>(payload),
                 Self::parse_masking_key,
             )),
             move |(payload, masking_key)| Self {

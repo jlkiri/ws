@@ -22,7 +22,7 @@ const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 async fn handle_upgraded(mut conn: Upgraded) -> Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
     let _len = conn.read_buf(&mut buffer).await?;
-    let (rest, frame) = websocket::Frame::parse(buffer.as_bytes()).expect("a");
+    let (rest, frame) = websocket::Frame::from_bytes(buffer.as_bytes()).expect("a");
     let mut msg = vec![0; frame.length as usize];
     let byte_mask = frame.masking_key.to_be_bytes();
 
