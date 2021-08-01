@@ -1,9 +1,6 @@
 use pretty_hex::*;
-use std::convert::Infallible;
-
 use nom::combinator::cond;
-use nom::error::ContextError;
-use nom::error::{Error as NomError, ErrorKind as NomErrorKind};
+use nom::error::{Error as NomError, ContextError, ErrorKind as NomErrorKind};
 use nom::number::complete::be_u32;
 use nom::{
     bits::bits, bits::bytes, bits::complete::take, bytes::complete::take as take_bytes,
