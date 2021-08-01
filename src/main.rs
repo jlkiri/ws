@@ -1,16 +1,14 @@
 mod websocket;
 
 use base64::encode;
-use bytes::{buf, Buf, BytesMut};
-use crypto::digest::Digest;
-use crypto::sha1::Sha1;
+use bytes::BytesMut;
+use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
     service::{make_service_fn, service_fn},
     upgrade::Upgraded,
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use pretty_hex::PrettyHex;
 use std::{convert::Infallible, future::Future, net::SocketAddr};
 use tokio::io::AsyncReadExt;
 use tokio::task;

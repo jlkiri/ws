@@ -1,11 +1,10 @@
-use pretty_hex::*;
 use nom::combinator::cond;
-use nom::error::{Error as NomError, ContextError, ErrorKind as NomErrorKind};
-use nom::number::complete::be_u32;
+use nom::error::{ContextError, Error as NomError, ErrorKind as NomErrorKind};
 use nom::{
-    bits::bits, bits::bytes, bits::complete::take, bytes::complete::take as take_bytes,
-    combinator::map, error::ParseError as NomParseError, sequence::tuple, IResult,
+    bits::bits, bits::complete::take as take_bits, combinator::map,
+    error::ParseError as NomParseError, number::complete::be_u32, sequence::tuple,
 };
+use pretty_hex::*;
 
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -71,11 +70,11 @@ impl Frame {
 
     pub fn parse_pre_payload(input: &[u8]) -> Result<(u8, u8, u8, u8, u8)> {
         bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
-            take(1usize),
-            take(3usize),
-            take(4usize),
-            take(1usize),
-            take(7usize),
+            take_bits(1usize),
+            take_bits(3usize),
+            take_bits(4usize),
+            take_bits(1usize),
+            take_bits(7usize),
         )))(input)
     }
 
@@ -88,7 +87,7 @@ impl Frame {
             127 => 64,
             _ => payload_hint,
         };
-        let payload = cond(payload_word_len >= 16, take(payload_word_len));
+        let payload = cond(payload_word_len >= 16, take_bits(payload_word_len));
         map(
             tuple((
                 bits::<_, _, NomError<(&[u8], usize)>, _, _>(payload),
