@@ -2,7 +2,7 @@ mod websocket;
 use color_eyre::Report;
 
 use base64::encode;
-use bytes::{buf, BytesMut};
+use bytes::BytesMut;
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
     service::{make_service_fn, service_fn},
@@ -10,28 +10,26 @@ use hyper::{
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use std::{convert::Infallible, fmt::Display, future::Future, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, future::Future, net::SocketAddr};
 use tokio::io::AsyncReadExt;
 use tokio::task;
+use thiserror::Error;
 
 type Result<T> = std::result::Result<T, Report>;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
-    Derp,
+    #[error("Any error")]
+    Any,
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Parser error: {0}")]
+    ParseError(String)
 }
-
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Error lol.")
-    }
-}
-
-impl std::error::Error for Error {}
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-async fn handle_upgraded(mut conn: Upgraded) -> Result<()> {
+async fn handle_upgraded(mut conn: Upgraded) -> std::result::Result<(), Error> {
     let mut buffer = BytesMut::with_capacity(4096);
     let frame_bytes = buffer.as_bytes().to_owned();
     let _len = conn.read_buf(&mut buffer).await?;
@@ -60,7 +58,7 @@ where
 }
 
 async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
-    let websocket_key = req.headers().get("Sec-WebSocket-Key").ok_or(Error::Derp)?;
+    let websocket_key = req.headers().get("Sec-WebSocket-Key").ok_or(Error::Any)?;
     let accept_key = generate_accept_key(websocket_key.as_bytes());
 
     let response = Response::builder()

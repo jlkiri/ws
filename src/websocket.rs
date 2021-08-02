@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::string::ParseError;
 
 use bytes::Bytes;
 use nom::combinator::{cond, map_res};
@@ -67,8 +68,12 @@ impl<I> nom::ErrorConvert<Error<I>> for NomError<(I, usize)> {
 }
 
 impl<I> From<nom::Err<Error<I>>> for crate::Error {
-    fn from(_: nom::Err<Error<I>>) -> Self {
-        crate::Error::Derp
+    fn from(e: nom::Err<Error<I>>) -> Self {
+        match e {
+            nom::Err::Error(_e) => crate::Error::ParseError("nom parser errors go here.".into()),
+            nom::Err::Incomplete(_) => crate::Error::ParseError("Not enough data.".into()),
+            nom::Err::Failure(_) => crate::Error::ParseError("Critical parser error.".into()),
+        }
     }
 }
 
