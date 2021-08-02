@@ -96,23 +96,23 @@ impl Frame {
             127 => 64,
             _ => payload_hint,
         };
-        let payload = cond(payload_word_len >= 16, take_bits(payload_word_len));
+        let payload_len = cond(payload_word_len >= 16, take_bits(payload_word_len));
 
-        let (rest, frame) = map(
+        let (payload, frame) = map(
             tuple((
-                bits::<_, _, NomError<(&[u8], usize)>, _, _>(payload),
+                bits::<_, _, NomError<(&[u8], usize)>, _, _>(payload_len),
                 Self::parse_masking_key,
             )),
-            move |(payload, masking_key)| Self {
+            move |(payload_len, masking_key)| Self {
                 fin,
                 rsv,
                 mask,
                 opcode,
-                length: payload.unwrap_or(payload_word_len),
+                length: payload_len.unwrap_or(payload_word_len),
                 masking_key,
             },
         )(rest)?;
 
-        Ok((rest.to_owned(), frame))
+        Ok((payload.to_owned(), frame))
     }
 }
