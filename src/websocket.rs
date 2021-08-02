@@ -1,4 +1,7 @@
-use nom::combinator::cond;
+use std::convert::Infallible;
+
+use bytes::Bytes;
+use nom::combinator::{cond, map_res};
 use nom::error::{ContextError, Error as NomError, ErrorKind as NomErrorKind};
 use nom::{
     bits::bits, bits::complete::take as take_bits, combinator::map,
@@ -63,6 +66,12 @@ impl<I> nom::ErrorConvert<Error<I>> for NomError<(I, usize)> {
     }
 }
 
+impl<I> From<nom::Err<Error<I>>> for crate::Error {
+    fn from(_: nom::Err<Error<I>>) -> Self {
+        crate::Error::Derp
+    }
+}
+
 impl Frame {
     pub fn parse_masking_key(input: &[u8]) -> Result<u32> {
         be_u32(input)
@@ -78,9 +87,9 @@ impl Frame {
         )))(input)
     }
 
-    pub fn from_bytes(input: &[u8]) -> Result<Frame> {
+    pub fn from_bytes(input: Vec<u8>) -> std::result::Result<(Vec<u8>, Frame), crate::Error> {
         println!("input: {}", input.hex_dump());
-        let (rest, parsed) = Self::parse_pre_payload(input)?;
+        let (rest, parsed) = Self::parse_pre_payload(&input)?;
         let (fin, rsv, opcode, mask, payload_hint) = parsed;
         let payload_word_len = match payload_hint {
             126 => 16,
@@ -88,7 +97,8 @@ impl Frame {
             _ => payload_hint,
         };
         let payload = cond(payload_word_len >= 16, take_bits(payload_word_len));
-        map(
+
+        let (rest, frame) = map(
             tuple((
                 bits::<_, _, NomError<(&[u8], usize)>, _, _>(payload),
                 Self::parse_masking_key,
@@ -101,6 +111,8 @@ impl Frame {
                 length: payload.unwrap_or(payload_word_len),
                 masking_key,
             },
-        )(rest)
+        )(rest)?;
+
+        Ok((rest.to_owned(), frame))
     }
 }

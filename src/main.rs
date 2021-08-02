@@ -1,7 +1,8 @@
 mod websocket;
+use color_eyre::Report;
 
 use base64::encode;
-use bytes::BytesMut;
+use bytes::{BytesMut, buf};
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
     service::{make_service_fn, service_fn},
@@ -9,18 +10,32 @@ use hyper::{
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use std::{convert::Infallible, future::Future, net::SocketAddr};
+use std::{convert::Infallible, fmt::Display, future::Future, net::SocketAddr, sync::Arc};
 use tokio::io::AsyncReadExt;
 use tokio::task;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type Result<T> = std::result::Result<T, Report>;
+
+#[derive(Debug)]
+pub enum Error {
+    Derp
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Error lol.")
+    }
+}
+
+impl std::error::Error for Error {}
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 async fn handle_upgraded(mut conn: Upgraded) -> Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
+    let owned_buffer = buffer.as_bytes().to_owned();
     let _len = conn.read_buf(&mut buffer).await?;
-    let (rest, frame) = websocket::Frame::from_bytes(buffer.as_bytes()).expect("a");
+    let (rest, frame) = websocket::Frame::from_bytes(owned_buffer)?;
     let mut msg = vec![0; frame.length as usize];
     let byte_mask = frame.masking_key.to_be_bytes();
 
@@ -48,7 +63,7 @@ async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
     let websocket_key = req
         .headers()
         .get("Sec-WebSocket-Key")
-        .expect("Sec-WebSocket-Key header not found.");
+        .ok_or(Error::Derp)?;
     let accept_key = generate_accept_key(websocket_key.as_bytes());
 
     let response = Response::builder()
@@ -81,8 +96,19 @@ fn generate_accept_key(websocket_key: &[u8]) -> String {
     accept_key
 }
 
+fn setup() -> Result<()> {
+    if std::env::var("RUST_LIB_BACKTRACE").is_err() {
+        std::env::set_var("RUST_LIB_BACKTRACE", "1")
+    }
+    color_eyre::install()?;
+
+    Ok(())
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+    setup()?;
+
     let addr = SocketAddr::from(([127, 0, 0, 1], 3456));
     let make_svc = make_service_fn(|_conn| async move { Ok::<_, Infallible>(service_fn(upgrade)) });
 
@@ -91,4 +117,6 @@ async fn main() {
     if let Err(e) = server.await {
         eprintln!("server error: {}", e);
     }
+
+    Ok(())
 }
