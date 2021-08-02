@@ -42,12 +42,12 @@ async fn handle_upgraded(mut conn: Upgraded) -> std::result::Result<(), Error> {
     let frame_bytes = (&buffer[..len]).to_owned();
     let (rest, frame) = Frame::from_bytes(frame_bytes)?;
 
-    let mut msg = vec![0; frame.length as usize];
-    let byte_mask = frame.masking_key.to_be_bytes();
+    let mut message = vec![0; frame.length as usize];
+    let mask = frame.masking_key.to_be_bytes();
 
-    decode(&mut msg, &rest, byte_mask, frame.length as usize);
+    decode(&mut message, &rest, mask, frame.length as usize);
 
-    println!("message: {}", String::from_utf8_lossy(&msg));
+    println!("message: {}", String::from_utf8_lossy(&message));
 
     Ok(())
 }
