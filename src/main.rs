@@ -11,9 +11,9 @@ use hyper::{
 };
 use nom::AsBytes;
 use std::{convert::Infallible, future::Future, net::SocketAddr};
+use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::task;
-use thiserror::Error;
 
 type Result<T> = std::result::Result<T, Report>;
 
@@ -24,7 +24,7 @@ pub enum Error {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Parser error: {0}")]
-    ParseError(String)
+    ParseError(String),
 }
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";

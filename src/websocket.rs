@@ -1,14 +1,12 @@
-use std::convert::Infallible;
-use std::string::ParseError;
-
-use bytes::Bytes;
-use nom::combinator::{cond, map_res};
+use nom::combinator::cond;
 use nom::error::{ContextError, Error as NomError, ErrorKind as NomErrorKind};
 use nom::{
     bits::bits, bits::complete::take as take_bits, combinator::map,
     error::ParseError as NomParseError, number::complete::be_u32, sequence::tuple,
 };
 use pretty_hex::*;
+
+use crate::Error;
 
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -17,11 +15,11 @@ pub enum ErrorKind {
 }
 
 #[derive(Debug)]
-pub struct Error<I> {
+pub struct ParseError<I> {
     pub errors: Vec<(I, ErrorKind)>,
 }
 
-impl<I> NomParseError<I> for Error<I> {
+impl<I> NomParseError<I> for ParseError<I> {
     fn from_error_kind(input: I, kind: NomErrorKind) -> Self {
         let errors = vec![(input, ErrorKind::Nom(kind))];
         Self { errors }
@@ -33,7 +31,7 @@ impl<I> NomParseError<I> for Error<I> {
     }
 }
 
-impl<I> ContextError<I> for Error<I> {
+impl<I> ContextError<I> for ParseError<I> {
     fn add_context(input: I, ctx: &'static str, mut other: Self) -> Self {
         other.errors.push((input, ErrorKind::Context(ctx)));
         other
@@ -41,7 +39,7 @@ impl<I> ContextError<I> for Error<I> {
 }
 
 pub type Input<'a> = &'a [u8];
-pub type Result<'a, T> = nom::IResult<Input<'a>, T, Error<Input<'a>>>;
+pub type Result<'a, T> = nom::IResult<Input<'a>, T, ParseError<Input<'a>>>;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -53,26 +51,26 @@ pub struct Frame {
     pub masking_key: u32,
 }
 
-impl<I> nom::ErrorConvert<Error<I>> for NomError<I> {
-    fn convert(self) -> Error<I> {
+impl<I> nom::ErrorConvert<ParseError<I>> for NomError<I> {
+    fn convert(self) -> ParseError<I> {
         let errors = vec![(self.input, ErrorKind::Nom(self.code))];
-        Error { errors }
+        ParseError { errors }
     }
 }
 
-impl<I> nom::ErrorConvert<Error<I>> for NomError<(I, usize)> {
-    fn convert(self) -> Error<I> {
+impl<I> nom::ErrorConvert<ParseError<I>> for NomError<(I, usize)> {
+    fn convert(self) -> ParseError<I> {
         let errors = vec![(self.input.0, ErrorKind::Nom(self.code))];
-        Error { errors }
+        ParseError { errors }
     }
 }
 
-impl<I> From<nom::Err<Error<I>>> for crate::Error {
-    fn from(e: nom::Err<Error<I>>) -> Self {
+impl<I> From<nom::Err<ParseError<I>>> for Error {
+    fn from(e: nom::Err<ParseError<I>>) -> Self {
         match e {
-            nom::Err::Error(_e) => crate::Error::ParseError("nom parser errors go here.".into()),
-            nom::Err::Incomplete(_) => crate::Error::ParseError("Not enough data.".into()),
-            nom::Err::Failure(_) => crate::Error::ParseError("Critical parser error.".into()),
+            nom::Err::Error(_e) => Error::ParseError("nom parser errors go here.".into()),
+            nom::Err::Incomplete(_) => Error::ParseError("Not enough data.".into()),
+            nom::Err::Failure(_) => Error::ParseError("Critical parser error.".into()),
         }
     }
 }
@@ -92,7 +90,7 @@ impl Frame {
         )))(input)
     }
 
-    pub fn from_bytes(input: Vec<u8>) -> std::result::Result<(Vec<u8>, Frame), crate::Error> {
+    pub fn from_bytes(input: Vec<u8>) -> std::result::Result<(Vec<u8>, Frame), Error> {
         println!("input: {}", input.hex_dump());
         let (rest, parsed) = Self::parse_pre_payload(&input)?;
         let (fin, rsv, opcode, mask, payload_hint) = parsed;
