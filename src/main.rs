@@ -1,8 +1,8 @@
 mod websocket;
-use color_eyre::Report;
 
 use base64::encode;
 use bytes::BytesMut;
+use color_eyre::Report;
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
     service::{make_service_fn, service_fn},
@@ -14,6 +14,7 @@ use std::{convert::Infallible, future::Future, net::SocketAddr};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::task;
+use websocket::Frame;
 
 type Result<T> = std::result::Result<T, Report>;
 
@@ -29,17 +30,22 @@ pub enum Error {
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+fn decode(target: &mut [u8], source: &[u8], mask: [u8; 4], len: usize) {
+    for i in 0..len {
+        target[i] = source[i] ^ mask[i % 4];
+    }
+}
+
 async fn handle_upgraded(mut conn: Upgraded) -> std::result::Result<(), Error> {
     let mut buffer = BytesMut::with_capacity(4096);
-    let frame_bytes = buffer.as_bytes().to_owned();
-    let _len = conn.read_buf(&mut buffer).await?;
-    let (rest, frame) = websocket::Frame::from_bytes(frame_bytes)?;
+    let len = conn.read_buf(&mut buffer).await?;
+    let frame_bytes = (&buffer[..len]).to_owned();
+    let (rest, frame) = Frame::from_bytes(frame_bytes)?;
+
     let mut msg = vec![0; frame.length as usize];
     let byte_mask = frame.masking_key.to_be_bytes();
 
-    for i in 0..frame.length as usize {
-        msg[i] = rest[i] ^ byte_mask[i % 4];
-    }
+    decode(&mut msg, &rest, byte_mask, frame.length as usize);
 
     println!("message: {}", String::from_utf8_lossy(&msg));
 
