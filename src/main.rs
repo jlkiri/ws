@@ -5,12 +5,13 @@ use bytes::BytesMut;
 use color_eyre::Report;
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
+    header::ToStrError,
     service::{make_service_fn, service_fn},
     upgrade::Upgraded,
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use std::{convert::Infallible, future::Future, net::SocketAddr};
+use std::{convert::Infallible, future::Future, net::SocketAddr, num::ParseIntError};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::task;
@@ -24,6 +25,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("Unknown error.")]
     Any,
+    #[error("Internal error.")]
+    Internal,
     #[error("I/O error: {0}.")]
     IoError(#[from] std::io::Error),
     #[error("Parser error: {0}.")]
@@ -38,6 +41,8 @@ pub enum Error {
 
 #[derive(Error, Debug)]
 pub enum InvalidUpgrade {
+    #[error("Invalid Sec-WebSocket-Version value.")]
+    InvalidVersionString(#[from] ParseIntError),
     #[error("Invalid Sec-WebSocket-Version.")]
     InvalidVersion,
     #[error("Required header not found: {0}.")]
@@ -93,12 +98,13 @@ async fn upgrade(req: Request<Body>) -> std::result::Result<Response<Body>, Erro
                 InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Version".into()),
             )?;
 
-            let ver_as_str = websocket_version
+            let ver = websocket_version
                 .to_str()
-                .map_err(|_| InvalidUpgrade::InvalidVersion)?;
-            let ver = ver_as_str
-                .parse::<i32>()
-                .map_err(|_| InvalidUpgrade::InvalidVersion)?;
+                .map_err(|_| Error::Internal)
+                .map(|res| {
+                    res.parse::<i32>()
+                        .map_err(|e| InvalidUpgrade::InvalidVersionString(e))
+                })??;
 
             if ver != 13 {
                 return Err(InvalidUpgrade::InvalidVersion.into());
