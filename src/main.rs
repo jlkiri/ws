@@ -29,15 +29,15 @@ pub enum Error {
     #[error("Parser error: {0}.")]
     ParseError(String),
     #[error("Upgrade error: {0}")]
-    Upgrade(#[from] UpgradeError),
+    UpgradeError(#[from] InvalidUpgrade),
     #[error("hyper error: {0}.")]
-    Hyper(#[from] hyper::Error),
+    HyperError(#[from] hyper::Error),
     #[error("hyper::http error: {0}.")]
-    HyperHttp(#[from] hyper::http::Error),
+    HyperHttpError(#[from] hyper::http::Error),
 }
 
 #[derive(Error, Debug)]
-pub enum UpgradeError {
+pub enum InvalidUpgrade {
     #[error("Invalid Sec-WebSocket-Version.")]
     InvalidVersion,
     #[error("Required header not found: {0}.")]
@@ -86,22 +86,22 @@ async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
         let websocket_key = req
             .headers()
             .get("Sec-WebSocket-Key")
-            .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Key".into()))?;
+            .ok_or(InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Key".into()))?;
 
         let websocket_version = req
             .headers()
             .get("Sec-WebSocket-Version")
-            .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Version".into()))?;
+            .ok_or(InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Version".into()))?;
 
         let ver_as_str = websocket_version
             .to_str()
-            .map_err(|_| UpgradeError::InvalidVersion)?;
+            .map_err(|_| InvalidUpgrade::InvalidVersion)?;
         let ver = ver_as_str
             .parse::<i32>()
-            .map_err(|_| UpgradeError::InvalidVersion)?;
+            .map_err(|_| InvalidUpgrade::InvalidVersion)?;
 
         if ver != 13 {
-            return Err(UpgradeError::InvalidVersion.into());
+            return Err(InvalidUpgrade::InvalidVersion.into());
         }
 
         let accept_key = generate_accept_key(websocket_key.as_bytes());
