@@ -5,27 +5,43 @@ use bytes::BytesMut;
 use color_eyre::Report;
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
+    header::HeaderName,
     service::{make_service_fn, service_fn},
     upgrade::Upgraded,
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use std::{convert::Infallible, future::Future, net::SocketAddr};
+use std::{convert::Infallible, fmt::Display, future::Future, net::SocketAddr};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::task;
 use websocket::Frame;
 
-type Result<T> = std::result::Result<T, Report>;
+type DefaultResult<T> = std::result::Result<T, Report>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Any error")]
+    #[error("Unknown error.")]
     Any,
-    #[error("I/O error: {0}")]
+    #[error("I/O error: {0}.")]
     IoError(#[from] std::io::Error),
-    #[error("Parser error: {0}")]
+    #[error("Parser error: {0}.")]
     ParseError(String),
+    #[error("Upgrade error: {0}.")]
+    Upgrade(#[from] UpgradeError),
+    #[error("hyper error: {0}.")]
+    Hyper(#[from] hyper::Error),
+    #[error("hyper::http error: {0}.")]
+    HyperHttp(#[from] hyper::http::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum UpgradeError {
+    #[error("Invalid Sec-WebSocket-Version.")]
+    InvalidVersion,
+    #[error("Required header not found: {0}.")]
+    HeaderNotFound(String),
 }
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -64,7 +80,26 @@ where
 }
 
 async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
-    let websocket_key = req.headers().get("Sec-WebSocket-Key").ok_or(Error::Any)?;
+    let websocket_key = req
+        .headers()
+        .get("Sec-WebSocket-Key")
+        .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Key".into()))?;
+    let websocket_version = req
+        .headers()
+        .get("Sec-WebSocket-Version")
+        .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Version".into()))?;
+
+    let ver_as_str = websocket_version
+        .to_str()
+        .map_err(|_| UpgradeError::InvalidVersion)?;
+    let ver = ver_as_str
+        .parse::<i32>()
+        .map_err(|_| UpgradeError::InvalidVersion)?;
+
+    if ver != 13 {
+        return Err(UpgradeError::InvalidVersion.into());
+    }
+
     let accept_key = generate_accept_key(websocket_key.as_bytes());
 
     let response = Response::builder()
@@ -97,17 +132,18 @@ fn generate_accept_key(websocket_key: &[u8]) -> String {
     accept_key
 }
 
-fn setup() -> Result<()> {
+fn setup() -> DefaultResult<()> {
     if std::env::var("RUST_LIB_BACKTRACE").is_err() {
         std::env::set_var("RUST_LIB_BACKTRACE", "1")
     }
+
     color_eyre::install()?;
 
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> DefaultResult<()> {
     setup()?;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3456));
