@@ -74,60 +74,61 @@ where
 {
     task::spawn(async move {
         if let Err(e) = fut.await {
-            warn!("SOMETHING WENT WRONG");
+            warn!("Websocket connection error: {}", e);
         }
     })
 }
 
-async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
+async fn upgrade(req: Request<Body>) -> std::result::Result<Response<Body>, Error> {
     info!("Incoming upgrade request.");
 
-    let handler_fut = async {
-        let websocket_key = req
-            .headers()
-            .get("Sec-WebSocket-Key")
-            .ok_or(InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Key".into()))?;
+    let handler_fut =
+        async {
+            let websocket_key = req
+                .headers()
+                .get("Sec-WebSocket-Key")
+                .ok_or(InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Key".into()))?;
 
-        let websocket_version = req
-            .headers()
-            .get("Sec-WebSocket-Version")
-            .ok_or(InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Version".into()))?;
+            let websocket_version = req.headers().get("Sec-WebSocket-Version").ok_or(
+                InvalidUpgrade::HeaderNotFound("Sec-WebSocket-Version".into()),
+            )?;
 
-        let ver_as_str = websocket_version
-            .to_str()
-            .map_err(|_| InvalidUpgrade::InvalidVersion)?;
-        let ver = ver_as_str
-            .parse::<i32>()
-            .map_err(|_| InvalidUpgrade::InvalidVersion)?;
+            let ver_as_str = websocket_version
+                .to_str()
+                .map_err(|_| InvalidUpgrade::InvalidVersion)?;
+            let ver = ver_as_str
+                .parse::<i32>()
+                .map_err(|_| InvalidUpgrade::InvalidVersion)?;
 
-        if ver != 13 {
-            return Err(InvalidUpgrade::InvalidVersion.into());
-        }
+            if ver != 13 {
+                return Err(InvalidUpgrade::InvalidVersion.into());
+            }
 
-        let accept_key = generate_accept_key(websocket_key.as_bytes());
+            let accept_key = generate_accept_key(websocket_key.as_bytes());
 
-        let response = Response::builder()
-            .status(StatusCode::SWITCHING_PROTOCOLS)
-            .header("Sec-WebSocket-Accept", accept_key)
-            .header("Upgrade", "websocket")
-            .header("Connection", "Upgrade")
-            .body(Body::empty())?;
+            let response = Response::builder()
+                .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header("Sec-WebSocket-Accept", accept_key)
+                .header("Upgrade", "websocket")
+                .header("Connection", "Upgrade")
+                .body(Body::empty())?;
 
-        spawn_and_log_error(async {
-            let upgraded_conn = hyper::upgrade::on(req).await?;
-            handle_upgraded(upgraded_conn).await?;
-            Ok(())
-        });
+            spawn_and_log_error(async {
+                let upgraded_conn = hyper::upgrade::on(req).await?;
+                handle_upgraded(upgraded_conn).await?;
+                Ok(())
+            });
 
-        Ok::<_, Error>(response)
-    };
+            Ok::<_, Error>(response)
+        };
 
-    if let Err(e) = handler_fut.await {
+    handler_fut.await.or_else(|e| {
         warn!("Error during connection upgrade: {}", e);
-        Err(e)
-    } else {
-        Ok(Response::new(Body::empty()))
-    }
+        Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap())
+    })
 }
 
 fn concat<T: Clone>(a: &[T], b: &[T]) -> Vec<T> {
