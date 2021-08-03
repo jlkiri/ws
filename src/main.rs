@@ -130,10 +130,10 @@ async fn upgrade(req: Request<Body>) -> std::result::Result<Response<Body>, Erro
 
     handler_fut.await.or_else(|e| {
         warn!("Error during connection upgrade: {}", e);
-        Ok(Response::builder()
+        let response = Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body(Body::empty())
-            .unwrap())
+            .body(Body::empty())?;
+        Ok(response)
     })
 }
 
