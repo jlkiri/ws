@@ -5,19 +5,19 @@ use bytes::BytesMut;
 use color_eyre::Report;
 use crypto::{digest::Digest, sha1::Sha1};
 use hyper::{
-    header::HeaderName,
     service::{make_service_fn, service_fn},
     upgrade::Upgraded,
     Body, Request, Response, Server, StatusCode,
 };
 use nom::AsBytes;
-use std::{convert::Infallible, fmt::Display, future::Future, net::SocketAddr};
+use std::{convert::Infallible, future::Future, net::SocketAddr};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::task;
+use tracing::{error, info, warn};
+use tracing_subscriber::{self, EnvFilter};
 use websocket::Frame;
 
-type DefaultResult<T> = std::result::Result<T, Report>;
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
@@ -28,7 +28,7 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("Parser error: {0}.")]
     ParseError(String),
-    #[error("Upgrade error: {0}.")]
+    #[error("Upgrade error: {0}")]
     Upgrade(#[from] UpgradeError),
     #[error("hyper error: {0}.")]
     Hyper(#[from] hyper::Error),
@@ -52,7 +52,7 @@ fn decode(target: &mut [u8], source: &[u8], mask: [u8; 4], len: usize) {
     }
 }
 
-async fn handle_upgraded(mut conn: Upgraded) -> std::result::Result<(), Error> {
+async fn handle_upgraded(mut conn: Upgraded) -> Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
     let len = conn.read_buf(&mut buffer).await?;
     let frame_bytes = (&buffer[..len]).to_owned();
@@ -74,48 +74,60 @@ where
 {
     task::spawn(async move {
         if let Err(e) = fut.await {
-            eprintln!("{}", e)
+            warn!("SOMETHING WENT WRONG");
         }
     })
 }
 
 async fn upgrade(req: Request<Body>) -> Result<Response<Body>> {
-    let websocket_key = req
-        .headers()
-        .get("Sec-WebSocket-Key")
-        .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Key".into()))?;
-    let websocket_version = req
-        .headers()
-        .get("Sec-WebSocket-Version")
-        .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Version".into()))?;
+    info!("Incoming upgrade request.");
 
-    let ver_as_str = websocket_version
-        .to_str()
-        .map_err(|_| UpgradeError::InvalidVersion)?;
-    let ver = ver_as_str
-        .parse::<i32>()
-        .map_err(|_| UpgradeError::InvalidVersion)?;
+    let handler_fut = async {
+        let websocket_key = req
+            .headers()
+            .get("Sec-WebSocket-Key")
+            .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Key".into()))?;
 
-    if ver != 13 {
-        return Err(UpgradeError::InvalidVersion.into());
+        let websocket_version = req
+            .headers()
+            .get("Sec-WebSocket-Version")
+            .ok_or(UpgradeError::HeaderNotFound("Sec-WebSocket-Version".into()))?;
+
+        let ver_as_str = websocket_version
+            .to_str()
+            .map_err(|_| UpgradeError::InvalidVersion)?;
+        let ver = ver_as_str
+            .parse::<i32>()
+            .map_err(|_| UpgradeError::InvalidVersion)?;
+
+        if ver != 13 {
+            return Err(UpgradeError::InvalidVersion.into());
+        }
+
+        let accept_key = generate_accept_key(websocket_key.as_bytes());
+
+        let response = Response::builder()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header("Sec-WebSocket-Accept", accept_key)
+            .header("Upgrade", "websocket")
+            .header("Connection", "Upgrade")
+            .body(Body::empty())?;
+
+        spawn_and_log_error(async {
+            let upgraded_conn = hyper::upgrade::on(req).await?;
+            handle_upgraded(upgraded_conn).await?;
+            Ok(())
+        });
+
+        Ok::<_, Error>(response)
+    };
+
+    if let Err(e) = handler_fut.await {
+        warn!("Error during connection upgrade: {}", e);
+        Err(e)
+    } else {
+        Ok(Response::new(Body::empty()))
     }
-
-    let accept_key = generate_accept_key(websocket_key.as_bytes());
-
-    let response = Response::builder()
-        .status(StatusCode::SWITCHING_PROTOCOLS)
-        .header("Sec-WebSocket-Accept", accept_key)
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .body(Body::empty())?;
-
-    spawn_and_log_error(async {
-        let upgraded_conn = hyper::upgrade::on(req).await?;
-        handle_upgraded(upgraded_conn).await?;
-        Ok(())
-    });
-
-    Ok(response)
 }
 
 fn concat<T: Clone>(a: &[T], b: &[T]) -> Vec<T> {
@@ -132,18 +144,26 @@ fn generate_accept_key(websocket_key: &[u8]) -> String {
     accept_key
 }
 
-fn setup() -> DefaultResult<()> {
+fn setup() -> std::result::Result<(), Report> {
     if std::env::var("RUST_LIB_BACKTRACE").is_err() {
-        std::env::set_var("RUST_LIB_BACKTRACE", "1")
+        std::env::set_var("RUST_LIB_BACKTRACE", "full")
     }
 
     color_eyre::install()?;
+
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info")
+    }
+
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> DefaultResult<()> {
+async fn main() -> std::result::Result<(), Report> {
     setup()?;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3456));
@@ -151,8 +171,10 @@ async fn main() -> DefaultResult<()> {
 
     let server = Server::bind(&addr).serve(make_svc);
 
+    info!("Listening on 127.0.0.1:3456...");
+
     if let Err(e) = server.await {
-        eprintln!("server error: {}", e);
+        warn!("Server error: {}", e);
     }
 
     Ok(())
